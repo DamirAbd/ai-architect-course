@@ -1,0 +1,494 @@
+openapi: 3.0.3
+info:
+  title: TechnoMart AI Service API
+  version: "1.0.0"
+  description: >
+    Internal API between Backend (Bitrix) and AI Service.
+    Endpoint returns recommended item IDs and (optionally) generated titles/descriptions.
+servers:
+  - url: https://ai-service.internal
+    description: Internal network
+tags:
+  - name: Recommendations
+    description: Recommendation generation and retrieval
+paths:
+  /get_recommendation:
+    post:
+      tags: [Recommendations]
+      summary: Get recommendations for a user/session context
+      description: >
+        Returns a list of recommended SKU/item IDs for a given context (home, product, cart).
+        Designed for synchronous use by Backend. AI Service should be able to respond quickly
+        by using precomputed scores and/or cache; heavy generation may be omitted or deferred.
+      operationId: getRecommendation
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GetRecommendationRequest"
+            examples:
+              home_logged_in:
+                summary: Home page recommendations for logged-in user
+                value:
+                  request_id: "9f6c2d0d-7f25-4a86-9b7c-3c2b6f1c8c2a"
+                  context:
+                    surface: "home"
+                    placement: "main_feed"
+                  user:
+                    user_id: "u_123456"
+                  session:
+                    session_id: "s_9f2b1c"
+                    cookie_id: "c_abc123"
+                  locale: "ru-RU"
+                  limit: 12
+                  flags:
+                    allow_llm: false
+                    explain: false
+              pdp_anonymous:
+                summary: Product page recommendations for anonymous user
+                value:
+                  request_id: "b25d9a1b-3c9f-4f7d-a6d4-7dcb0c2fd02e"
+                  context:
+                    surface: "product"
+                    placement: "pdp_related"
+                    anchor_item_id: "SKU-100200"
+                  session:
+                    session_id: "s_51aa"
+                    cookie_id: "c_xyz999"
+                  locale: "ru-RU"
+                  limit: 8
+                  flags:
+                    allow_llm: true
+                    explain: true
+      responses:
+        "200":
+          description: Recommendations generated successfully
+          headers:
+            X-Request-Id:
+              description: Echo of request_id for tracing
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetRecommendationResponse"
+              examples:
+                ok_ids_only:
+                  summary: IDs only (fast path)
+                  value:
+                    request_id: "9f6c2d0d-7f25-4a86-9b7c-3c2b6f1c8c2a"
+                    context:
+                      surface: "home"
+                      placement: "main_feed"
+                    recommendations:
+                      - item_id: "SKU-111"
+                        score: 0.982
+                      - item_id: "SKU-222"
+                        score: 0.961
+                      - item_id: "SKU-333"
+                        score: 0.944
+                    meta:
+                      model_version: "reco-mf-2026-02-20"
+                      cache:
+                        hit: true
+                        ttl_seconds: 600
+                      latency_ms: 45
+                ok_with_text:
+                  summary: IDs + generated title/description
+                  value:
+                    request_id: "b25d9a1b-3c9f-4f7d-a6d4-7dcb0c2fd02e"
+                    context:
+                      surface: "product"
+                      placement: "pdp_related"
+                      anchor_item_id: "SKU-100200"
+                    title: "Похожие товары к выбранному ноутбуку"
+                    description: "Подобрали модели с близкими характеристиками и хорошими отзывами."
+                    recommendations:
+                      - item_id: "SKU-100210"
+                        score: 0.912
+                      - item_id: "SKU-100240"
+                        score: 0.901
+                    explanation:
+                      type: "rag"
+                      snippets:
+                        - source: "catalog"
+                          text: "Близкие характеристики: 16GB RAM, 512GB SSD."
+                        - source: "behavior"
+                          text: "Часто выбирают вместе с этой моделью."
+                    meta:
+                      model_version: "reco-hybrid-2026-02-25"
+                      llm:
+                        used: true
+                        provider: "external"
+                        policy_id: "pii-redact-v1"
+                      cache:
+                        hit: false
+                        ttl_seconds: 900
+                      latency_ms: 140
+        "400":
+          description: Invalid request (schema/validation error)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                bad_request:
+                  value:
+                    error:
+                      code: "VALIDATION_ERROR"
+                      message: "context.surface is required"
+                      details:
+                        - path: "$.context.surface"
+                          reason: "missing"
+        "401":
+          description: Unauthorized (missing/invalid API key)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden (policy violation, e.g. PII not allowed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                policy_block:
+                  value:
+                    error:
+                      code: "POLICY_BLOCKED"
+                      message: "PII detected in input. Generation is blocked by policy."
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal error in AI Service
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: AI Service temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+
+  schemas:
+    GetRecommendationRequest:
+      type: object
+      required: [request_id, context, session, locale, limit]
+      additionalProperties: false
+      properties:
+        request_id:
+          type: string
+          description: Idempotency/tracing identifier (UUID recommended).
+          example: "9f6c2d0d-7f25-4a86-9b7c-3c2b6f1c8c2a"
+        context:
+          $ref: "#/components/schemas/RecommendationContext"
+        user:
+          $ref: "#/components/schemas/UserContext"
+        session:
+          $ref: "#/components/schemas/SessionContext"
+        locale:
+          type: string
+          description: IETF BCP 47 locale.
+          example: "ru-RU"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 12
+        filters:
+          $ref: "#/components/schemas/RecommendationFilters"
+        flags:
+          $ref: "#/components/schemas/RecommendationFlags"
+
+    RecommendationContext:
+      type: object
+      required: [surface, placement]
+      additionalProperties: false
+      properties:
+        surface:
+          type: string
+          description: Where the recommendation is requested.
+          enum: [home, product, cart, search, email, push]
+        placement:
+          type: string
+          description: Widget placement identifier for analytics/AB tests.
+          example: "main_feed"
+        anchor_item_id:
+          type: string
+          description: Anchor SKU for product-page recommendations (required when surface=product).
+          example: "SKU-100200"
+        cart_item_ids:
+          type: array
+          description: List of SKU IDs currently in cart (when surface=cart).
+          items:
+            type: string
+          maxItems: 200
+        category_id:
+          type: string
+          description: Optional category context for browsing.
+          example: "CAT-12"
+        channel:
+          type: string
+          description: Client channel.
+          enum: [web, mobile]
+          default: web
+
+    UserContext:
+      type: object
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          description: Internal user identifier (present for logged-in users).
+          example: "u_123456"
+        segment_ids:
+          type: array
+          description: Optional marketing segments.
+          items:
+            type: string
+        consent:
+          $ref: "#/components/schemas/Consent"
+
+    SessionContext:
+      type: object
+      required: [session_id, cookie_id]
+      additionalProperties: false
+      properties:
+        session_id:
+          type: string
+          description: Session identifier.
+          example: "s_9f2b1c"
+        cookie_id:
+          type: string
+          description: Anonymous tracking identifier (no direct PII).
+          example: "c_abc123"
+        ip_hash:
+          type: string
+          description: Hashed IP for coarse geo/risk signals (optional).
+        user_agent_hash:
+          type: string
+          description: Hashed user agent (optional).
+        device_id:
+          type: string
+          description: Optional mobile device ID (hashed).
+        ab:
+          $ref: "#/components/schemas/ABContext"
+
+    ABContext:
+      type: object
+      additionalProperties: false
+      properties:
+        experiment_id:
+          type: string
+          example: "reco_home_v1"
+        variant:
+          type: string
+          description: A/B variant label.
+          example: "B"
+
+    Consent:
+      type: object
+      additionalProperties: false
+      properties:
+        personalization:
+          type: boolean
+          description: Whether user consented to personalization.
+          default: true
+        marketing:
+          type: boolean
+          description: Whether user consented to marketing communications.
+          default: false
+
+    RecommendationFilters:
+      type: object
+      additionalProperties: false
+      properties:
+        exclude_item_ids:
+          type: array
+          items:
+            type: string
+          description: Items to exclude (e.g., already purchased).
+          maxItems: 500
+        price_min:
+          type: number
+          format: float
+          minimum: 0
+        price_max:
+          type: number
+          format: float
+          minimum: 0
+        in_stock_only:
+          type: boolean
+          default: true
+        brand_ids:
+          type: array
+          items:
+            type: string
+          maxItems: 50
+
+    RecommendationFlags:
+      type: object
+      additionalProperties: false
+      properties:
+        allow_llm:
+          type: boolean
+          description: >
+            Whether AI Service may use LLM via gateway to generate title/description/explanations.
+            If false, response should contain item IDs only.
+          default: false
+        explain:
+          type: boolean
+          description: Whether to include an explanation object (may increase latency).
+          default: false
+        refresh_cache:
+          type: boolean
+          description: Force refresh cached recommendations (admin/debug only).
+          default: false
+
+    GetRecommendationResponse:
+      type: object
+      required: [request_id, context, recommendations, meta]
+      additionalProperties: false
+      properties:
+        request_id:
+          type: string
+        context:
+          $ref: "#/components/schemas/RecommendationContext"
+        title:
+          type: string
+          description: Optional generated title for the recommendation set.
+        description:
+          type: string
+          description: Optional generated description for the recommendation set.
+        recommendations:
+          type: array
+          minItems: 0
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/RecommendationItem"
+        explanation:
+          $ref: "#/components/schemas/Explanation"
+        meta:
+          $ref: "#/components/schemas/ResponseMeta"
+
+    RecommendationItem:
+      type: object
+      required: [item_id]
+      additionalProperties: false
+      properties:
+        item_id:
+          type: string
+          description: SKU/item identifier.
+        score:
+          type: number
+          format: float
+          description: Model score (higher is better). May be omitted for some strategies.
+        reason_codes:
+          type: array
+          description: Optional machine-readable reasons.
+          items:
+            type: string
+            enum: [similar_items, co_purchase, viewed_before, trending, personalized, margin_boost]
+          maxItems: 5
+
+    Explanation:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [none, rules, rag]
+          default: none
+        snippets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ExplanationSnippet"
+          maxItems: 5
+
+    ExplanationSnippet:
+      type: object
+      required: [source, text]
+      additionalProperties: false
+      properties:
+        source:
+          type: string
+          enum: [catalog, behavior, policy]
+        text:
+          type: string
+          maxLength: 300
+
+    ResponseMeta:
+      type: object
+      required: [model_version, cache, latency_ms]
+      additionalProperties: false
+      properties:
+        model_version:
+          type: string
+          description: Identifier of the model/strategy used.
+          example: "reco-mf-2026-02-20"
+        cache:
+          type: object
+          required: [hit, ttl_seconds]
+          additionalProperties: false
+          properties:
+            hit:
+              type: boolean
+            ttl_seconds:
+              type: integer
+              minimum: 0
+        llm:
+          type: object
+          additionalProperties: false
+          properties:
+            used:
+              type: boolean
+            provider:
+              type: string
+              description: Provider label (abstracted).
+              example: "external"
+            policy_id:
+              type: string
+              description: Policy applied by LLM Gateway.
+              example: "pii-redact-v1"
+        latency_ms:
+          type: integer
+          minimum: 0
+          description: End-to-end AI Service processing latency.
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              example: "INTERNAL_ERROR"
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                additionalProperties: true

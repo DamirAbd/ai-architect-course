@@ -1,0 +1,44 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_LEFT_RIGHT()
+title TechnoMart - C2 Container Diagram
+
+Person(customer, "Клиент", "Получает информацию по товарам, рекомендации. Делает заказ")
+Person(ds, "Data Scientist", "Настраивает модель, контролирует качество")
+
+System_Boundary(s1, "TechnoMart") {
+
+  Container(front, "Web App", "Сайт", "UI + виджеты с рекомендациямии")
+  Container(back, "Backend Bitrix", "PHP Monolith", "Бизнес-логика, вызов AI Service")
+  Container(ai, "AI Service", "ML/LLM", "Оркестрация LLM, логика")
+  Container(gw, "LLM Gateway", "Proxy/Policy Service", "PII фильтр, логирование, RL, абстракции")
+
+  ContainerDb(sql, "SQL DB", "MySQL", "Пользователи, закады, каталог")
+  ContainerDb(vdb, "Vector DB", "Milvus/Weaviate/pgvector", "Эмбендинги и семантика")
+  ContainerDb(redis, "Cache", "Redis", "Кеш с рекомендациями, сессионные данные")
+  System(erp, "1C (ERP)", "Данные по продажам")
+}
+
+System_Ext(llmprov, "Поставщик LLM", "LLM API")
+
+Rel(customer, front, "Просматривает")
+Rel(front, back, "Отправляет запрос\n (HTTPS/JSON)")
+
+Rel(back, sql, "SQL")
+'Rel(back, redis, "Reads recommendations", "Redis")
+Rel(back, ai, "Отправляет запрос\nHTTP")
+
+Rel(ai, sql, "Получает данные")
+Rel(ai, vdb, "Чтение/запись embeddings", "HTTPS/gRPC")
+Rel(ai, redis, "Чтение/запись топ-рекомендаций")
+Rel(ai, gw, "Вызывает LLM с заготовленными промптами", "HTTPS")
+
+Rel(gw, llmprov, "Вызывает API", "HTTPS")
+
+Rel(erp, sql, "Синхронизация заказов\n раз в 15 мин")
+
+Rel(ds, vdb, "Провверяет качество")
+Rel(ds, gw, "Тестирует / настраивает политики")
+
+@enduml

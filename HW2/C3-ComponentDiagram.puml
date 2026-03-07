@@ -1,0 +1,56 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+'LAYOUT_LEFT_RIGHT()
+'skinparam linetype ortho
+title AI Service Component Diagram (C3) TechnoMart
+
+Container_Boundary(ai, "AI Service", "ML/LLM", "Оркестрация LLM, логика") {
+
+  Component(ctrl, "Controller", "API Controller", "Внутреннее API: генерация контента, оркестрация")
+  Component(guard, "PII & Политики безопасности", "Service", "Редактирование PII, проверка промптов/результатов, защита от отправки в LLM чувствительных данных")
+
+  Component(rag, "RAG Manager", "Service", "Получение данных + промт, вызов LLM Client")
+  Component(retr, "Context Retriever", "Service", "Получение инфо о продукте и контекста взаимодействия")
+  Component(ptf, "Prompt Template Factory", "Library", "Подбор шаблонов для промпта")
+  Component(llm, "LLM Client", "Client", "Вызывает LLM Gateway, возвращает ответ от модели")
+  Component(post, "Output Post-Processor", "Service", "Валидация и обработка ответа")
+  Component(embed, "Embedding Generator", "Service", "Создание эмбедингов по продуктам и запросам; управление векторной DB")
+  Component(train, "Model Trainer", "Batch Job", "Обучает модель рекомендации по заказам")
+  Component(score, "Batch Scoring Job", "Batch Job", "Оценивает результаты рекомендации и управляет в кэшом топа")
+
+  Component(obs, "Monitoring & Audit Logger", "Agent/Library", "Метрики, логи, аудит")
+}
+
+System_Ext(sql, "MySQL", "Пользователи, закады, каталог")
+System_Ext(redis, "Cache", "Кеш с рекомендациями, сессионные данные")
+System_Ext(vdb, "Vector DB", "Эмбендинги и семантика")
+System_Ext(gw, "LLM Gateway", "PII фильтр, логирование, RL, абстракции")
+System_Ext(erp, "1C (ERP)", "Данные по продажам")
+
+Rel(ctrl, guard, "Примененеи политик безопасности")
+Rel(ctrl, embed, "Запуск генерации эмбедингов")
+Rel(ctrl, rag, "Запск процесса генерации")
+
+Rel(rag, retr, "Передача контекста")
+Rel(rag, ptf, "Запрос промпта")
+Rel(rag, llm, "Передача промпта")
+Rel(llm, post, "Возврат ответа")
+Rel(post, ctrl, "Возврат валидированного результата")
+
+Rel(train, obs, "Перадеча метрик, логов")
+Rel(score, obs, "Перадеча метрик, логов")
+Rel(rag, obs, "Перадеча метрик, логов")
+
+Rel(retr, sql, "Получение инфо по продуктам и пользователям")
+Rel(train, sql, "Чтение дата-сета")
+Rel(train, erp, "Инфо по заказам")
+Rel(embed, vdb, "Запись эмбедингов")
+Rel(rag, vdb, "Получение топа")
+
+Rel(score, redis, "Запись топ")
+Rel(rag, guard, "Валидация промпта")
+
+Rel(llm, gw, "Вызов LLM Gateway")
+
+@enduml

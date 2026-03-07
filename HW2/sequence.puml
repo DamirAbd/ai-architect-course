@@ -1,0 +1,43 @@
+@startuml
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 140
+
+title Sequence Diagram\nПоследовательность "Пользователь запрашивает рекомендацию"
+
+actor Пользователь as user
+participant "Web App" as fe
+participant "Backend Bitrix" as be
+database "Cache" as redis
+participant "AI Service" as ai
+database "SQL DB" as sql
+database "Vector DB" as vdb
+participant "LLM Gateway" as gw
+participant "LLM Provider" as llm
+
+user -> fe : Запрашивает рекомендацию
+fe -> be : GET /api/recommendations?context=
+
+be -> redis : GET rec:{userId|cookieId}:{context}
+alt Есть кэшированные рекомендации
+  redis --> be : Кэш с данными
+  be --> fe : 200 OK recommendations
+  fe -> user : Просматривает рекомендации
+else Нет данных в кэше
+  redis --> be : null
+  be -> ai : POST /internal/recommend
+  ai -> sql : Пулучить данные по пользователю и товарам
+  opt
+    ai -> vdb : Поиск похожего, близкие значения
+  end
+  ai -> gw : POST /llm\n{prompt, policyId}
+  gw -> llm : Вызов LLM API
+  llm --> gw : Сгенерированный текст
+  gw --> ai : Текст (проверенный)
+  ai -> redis : SET rec:{userId|cookieId}:{context}\n(ItemIDs + текст)
+  ai --> be : Значения рекомендаций (ItemIDs + title/описание)
+  be --> fe : 200 OK Рекомендации (items + text)
+  fe -> user : Просматривает рекомендации
+end
+
+@enduml
