@@ -1,0 +1,41 @@
+@startuml
+hide footbox
+skinparam sequenceMessageAlign left
+skinparam maxMessageSize 120
+
+actor User
+participant "Manager Agent" as Manager
+participant "Policy RAG Agent" as RAG
+database "Vector DB" as VDB
+participant "Travel Search Agent" as Search
+participant "Booking Agent" as Booking
+
+User -> Manager : Оформить командировку
+
+alt Не хватает параметров
+  Manager -> User : Уточните даты и предпочтения
+  User -> Manager : 15-17 апреля,\nвариант подешевле
+end
+
+Manager -> RAG : Получить policy 
+RAG -> VDB : Retrieve + rerank
+VDB --> RAG : Релевантные policy chunks
+RAG --> Manager : Лимиты и правила компании
+
+Manager -> Search : Найти билеты и отели\nс учетом ограничений
+Search --> Manager : Допустимые варианты
+
+Manager -> User : Показать 3 лучших варианта
+User -> Manager : Выбор варианта
+
+alt Требуется согласование
+  Manager -> User : Нужно приложить согласование
+  Manager -> Manager : Ожидание согласования
+  User --> Manager : Прикладывает согласование
+else Согласование не требуется/Согласование получено
+  Manager -> Booking : Выполнить бронирование
+  Booking --> Manager : Бронирование успешно
+end
+
+Manager --> User : Итоговый результат
+@enduml

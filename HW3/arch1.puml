@@ -1,0 +1,38 @@
+@startuml
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+actor "Пользователь" as User
+
+rectangle "Интеллектуальный помощник по командировкам" {
+  component "Менеджер-агент\n(оркестратор)" as Manager
+  component "RAG-агент политики\nкомандировок" as RAG
+  component "Агент поиска\nвариантов поездки" as Search
+  component "Агент бронирования" as Booking
+}
+
+folder "База знаний\nTravel policy / FAQ / лимиты" as KB
+database "Векторная база данных" as VDB
+cloud "API авиабилетов" as FlightAPI
+cloud "API отелей" as HotelAPI
+cloud "API бронирования" as BookingAPI
+
+User --> Manager : запрос командировки\nвыбор варианта
+
+Manager --> RAG : получить ограничения\ntravel policy
+RAG --> KB : чтение исходных документов
+RAG --> VDB : семантический поиск\nрелевантных фрагментов
+
+Manager --> Search : поиск вариантов поездки\nс учетом ограничений
+Search --> FlightAPI : поиск авиабилетов
+Search --> HotelAPI : поиск отелей
+Search --> Manager : найденные варианты
+
+Manager --> Booking : подтвердить выбранный вариант
+Booking --> BookingAPI : финальное бронирование
+Booking --> Manager : результат бронирования
+
+Manager --> User : варианты поездки /\nитоговый маршрут /\nстатус согласования
+@enduml
