@@ -17,7 +17,7 @@ alt Не хватает параметров
   User -> Manager : 15-17 апреля,\nвариант подешевле
 end
 
-Manager -> RAG : Получить policy 
+Manager -> RAG : Получить policy
 RAG -> VDB : Retrieve + rerank
 VDB --> RAG : Релевантные policy chunks
 RAG --> Manager : Лимиты и правила компании
@@ -29,13 +29,20 @@ Manager -> User : Показать 3 лучших варианта
 User -> Manager : Выбор варианта
 
 alt Требуется согласование
-  Manager -> User : Нужно приложить согласование
-  Manager -> Manager : Ожидание согласования
-  User --> Manager : Прикладывает согласование
-else Согласование не требуется/Согласование получено
+  Manager -> User : Требуется согласование руководителя
+
+  alt Согласование приложено
+    User -> Manager : Прикладывает согласование
+    Manager -> Booking : Выполнить бронирование
+    Booking --> Manager : Бронирование успешно
+    Manager --> User : Командировка оформлена
+  else Согласование не приложено
+    Manager --> User : Оформление приостановлено\nдо получения согласования
+  end
+
+else Согласование не требуется
   Manager -> Booking : Выполнить бронирование
   Booking --> Manager : Бронирование успешно
+  Manager --> User : Командировка оформлена
 end
-
-Manager --> User : Итоговый результат
 @enduml
