@@ -1,9 +1,13 @@
 @startuml Data Pipeline для рекомендательной AI-системы
 
-left to right direction
+top to bottom direction
 skinparam ArrowThickness 1.6
+skinparam linetype ortho
 skinparam roundcorner 14
 skinparam packageStyle rectangle
+skinparam shadowing false
+skinparam nodesep 28
+skinparam ranksep 42
 skinparam package {
   BackgroundColor #FFFFFF
   BorderColor #CBD5E1
@@ -22,72 +26,75 @@ skinparam note {
 }
 
 package "01. Источники данных" #F8FAFC {
-  rectangle "Взаимодействия пользователей\n поток событий" as clicks #DBEAFE
-  rectangle "ERP: каталог товаров\nBATCH, выгрузка с заданной периодичностью" as erp #FEF3C7
+  rectangle "Взаимодействия пользователей\nпоток событий" as clicks #DBEAFE
+  rectangle "ERP: каталог товаров\nBATCH, выгрузка по расписанию" as erp #FEF3C7
+  clicks -[hidden]right-> erp
 }
 
 package "02. Интеграционный слой" #F8FAFC {
-  rectangle "Event Collector\nВалидация события" as collector #F3E8FF
+  rectangle "Event Collector + Kafka\nвалидация, публикация, retention\nSchema Registry" as collector #F3E8FF
   rectangle "Файлы от ERP" as landing #F3E8FF
+  collector -[hidden]right-> landing
 }
 
 package "03. Обработка, качество и Lakehouse" #F8FAFC {
   rectangle "Spark Structured Streaming\nдедупликация, watermark\nочистка и агрегация сессий" as stream #DCFCE7
-  rectangle "Airflow + Spark Batch\nнормализация, загрузка\nобогащение каталога товаров" as batch #DCFCE7
-  rectangle "Data Quality Gate" as dq #FEF3C7
+  rectangle "Airflow + Spark Batch\nнормализация, инкрементальная загрузка\nобогащение каталога товаров" as batch #DCFCE7
+  rectangle "Data Quality Gate\nпроверка схемы и качества" as dq #FEF3C7
   rectangle "Карантин и DQ-отчёты\nнекорректные записи, алерты" as quarantine #FFF7ED
-  database "S3 \n+\n Apache Iceberg Lakehouse" as lake #D1FAE5
+  database "S3 + Apache Iceberg Lakehouse\n" as lake #D1FAE5
+
+  stream -[hidden]right-> batch
+  stream -down-> dq 
+  batch -down-> dq 
+  dq -right-> quarantine 
+  dq -down-> lake 
 }
 
 package "04. Фичи, датасеты и жизненный цикл модели" #F8FAFC {
-  rectangle "Репозиторий фичей" as definitions #EDE9FE
-  database "Feature Store\nисторические Feature Views\npoint-in-time корректные joins" as fs_off #EDE9FE
-  rectangle "Dataset Builder\nParquet-снимок + версия датасета\nразделение по времени: train / validation / test" as dataset #EDE9FE
+  rectangle "Репозиторий feature definitions\nGit, версии и контракты" as definitions #EDE9FE
   rectangle "Feature Engineering\nрасчёт user-, item- и context-features\nединые feature definitions" as feature_job #EDE9FE
-  rectangle "MLflow Model Registry\nодобренная версия модели\nметаданные фичей, датасета и эмбеддингов" as registry #EDE9FE
-  database "Feature Online Store / Redis\nзначения для инференса" as fs_on #EDE9FE
-  rectangle "Embedding Worker\nОбработка измененных товаров" as embed #EDE9FE
-  database "Qdrant Vector DB\nэмбеддинги товаров + метаданные" as qdrant #EDE9FE
-  rectangle "Model Training + Evaluation\nобучение, offline-метрики,\nсравнение с baseline" as train #EDE9FE
+  rectangle "Embedding Worker\nобработка изменённых товаров\nснимки эмбеддингов в Lakehouse" as embed #EDE9FE
+
+  database "Offline Feature Store\nистория Feature Viewss" as fs_off #EDE9FE
+  database "Online Feature Store / Redis\nзначения для инференса" as fs_on #EDE9FE
+  database "Qdrant Vector DB\nэмбеддинги товаров, метаданные" as qdrant #EDE9FE
+
+  rectangle "Dataset Builder\nParquet-снимок + версия датасета\ntrain / validation / test" as dataset #EDE9FE
+  rectangle "Model Training + Evaluation\nобучение, offline-метрики" as train #EDE9FE
+  database "Model Registry\nодобренная версия модели" as registry #EDE9FE
+
+  definitions -right..> feature_job 
+  feature_job -[hidden]right-> embed
+  fs_off -[hidden]right-> fs_on
+  fs_on -[hidden]right-> qdrant
+
+  feature_job -down-> fs_off 
+  feature_job -down-> fs_on 
+  embed -down-> qdrant 
+
+  fs_off -down-> dataset 
+  dataset -down-> train 
+  train -down-> registry 
 }
 
 package "05. Онлайн-инференс и обратная связь" #F8FAFC {
-  rectangle "Recommendation API\nretrieval -> ranking -> reranking\nконтроль совместимости фичей и модели" as rec #FFE4E6
+  rectangle "Recommendation API\nretrieval → ranking → reranking\nконтроль совместимости фичей и модели" as rec #FFE4E6
 }
 
+clicks -down-> collector
+erp -down-> landing
+collector -down-> stream 
+landing -down-> batch 
 
-clicks --> collector : событие
-collector --> stream : stream (Kafka)
-stream --> dq : очистка + обогащение
+lake -down-> feature_job 
+lake -down-> embed 
 
-erp --> landing : batch
-landing --> batch : загрузка файлом
-batch --> dq : нормализация + проверка
-
-definitions ..> feature_job : feature definitions
-
-feature_job --> fs_off : исторические значения фичей
-feature_job --> fs_on : последние значения для инференса
+registry -down-> rec 
+fs_on -down-> rec 
+qdrant -down-> rec 
 
 
-dq --> lake : прошедшие данные
-dq --> quarantine : не пройдено правило
-
-
-lake --> definitions : исходные данные для фичей
-
-
-fs_off --> dataset : point-in-time join
-dataset --> train : versioned train / validation / test dataset
-train --> registry : модель + метрики + dataset version
-
-lake --> embed : изменённые товары
-embed --> lake : снимки эмбеддингов
-embed --> qdrant : upsert векторов
-
-
-registry --> rec : active model + metadata
-fs_on --> rec : online-features
-qdrant --> rec : кандидаты по близости векторов
+embed -left-> lake
 
 @enduml
